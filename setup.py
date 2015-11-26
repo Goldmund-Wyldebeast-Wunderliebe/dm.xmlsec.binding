@@ -1,55 +1,65 @@
-import sys, commands
+import sys
+import commands
 from os.path import abspath, dirname, join, exists
 from os import environ
-
-# see whether Cython is installed
-try: import Cython
-except ImportError: have_cython = False
-else: have_cython = True
 
 # to be extended when Cython is installed
 cmdclass = {}
 
-if have_cython:
-  # we must work around `setuptools` to change `.pyx` into `.c` sources
-  #  it does not find `Pyrex`
-  sys.modules["Pyrex"] = Cython
-  from Cython.Distutils import build_ext
-  cmdclass["build_ext"] = build_ext
+# see whether Cython is installed
+try:
+    import Cython
+    # we must work around `setuptools` to change `.pyx` into `.c` sources
+    #  it does not find `Pyrex`
+    sys.modules["Pyrex"] = Cython
+    from Cython.Distutils import build_ext
+    cmdclass["build_ext"] = build_ext
+except ImportError:
+    pass
 
 # installation requires "setuptools" (or equivalent) installed
-from setuptools import setup, Extension
+from setuptools import setup, Extension as BaseExtension
 
 # we must extend our cflags once `lxml` is installed.
 #  To this end, we override `Extension`
-class Extension(Extension, object):
-  lxml_extended = False
 
-  def get_include_dirs(self):
-    ids = self.__dict__["include_dirs"]
-    if self.lxml_extended: return ids
-    # ensure `lxml` headers come before ours
-    #  this should make sure to use its headers rather than our old copy
-    # ids.extend(get_lxml_include_dirs())
-    ids[0:0] = get_lxml_include_dirs()
-    self.lxml_extended = True
-    return ids
 
-  def set_include_dirs(self, ids): self.__dict__["include_dirs"] = ids
+class Extension(BaseExtension, object):
+    """ Override include_dirs functionality
+    of the setuptools Extension class. """
+    lxml_extended = False
 
-  include_dirs = property(get_include_dirs, set_include_dirs)
+    def get_include_dirs(self):
+        """ Get the 'include_dirs' """
+        ids = self.__dict__["include_dirs"]
+        if self.lxml_extended:
+            return ids
+        # ensure `lxml` headers come before ours
+        #  this should make sure to use its headers rather than our old copy
+        # ids.extend(get_lxml_include_dirs())
+        ids[0:0] = get_lxml_include_dirs()
+        self.lxml_extended = True
+        return ids
+
+    def set_include_dirs(self, ids):
+        """ Update 'include_dirs' keys with the given ids """
+        self.__dict__["include_dirs"] = ids
+
+    include_dirs = property(get_include_dirs, set_include_dirs)
 
 # determine macros, include dirs, libraries dirs and libraries required
 #  for ourself, `libxml2` and `libxmlsec1`
 define_macros = []
-include_dirs  = ["src"]
-library_dirs  = []
-libraries     = []
+include_dirs = ["src"]
+library_dirs = []
+libraries = []
+
 
 def extract_cflags(cflags):
+    """ Extract the cflags ? """
     global define_macros, include_dirs
-    list = cflags.split(' ')
-    for flag in list:
+    cflags_list = cflags.split(' ')
+    for flag in cflags_list:
         if flag == '':
             continue
         flag = flag.replace("\\\"", "")
@@ -61,7 +71,8 @@ def extract_cflags(cflags):
             if t not in define_macros:
                 # fix provided by "tleppako@gmail.com"
                 #  to let it work with 64 bit architectures
-                #  see: http://lists.labs.libre-entreprise.org/pipermail/pyxmlsec-devel/2011-September/000082.html
+                # see:
+                # http://lists.labs.libre-entreprise.org/pipermail/pyxmlsec-devel/2011-September/000082.html
                 if len(t) == 1:
                     define_macros.append((t[0], "1"))
                 else:
@@ -69,10 +80,12 @@ def extract_cflags(cflags):
         else:
             print "Warning : cflag %s skipped" % flag
 
+
 def extract_libs(libs):
+    """ Extract the libs ? """
     global library_dirs, libraries
-    list = libs.split(' ')
-    for flag in list:
+    libs_list = libs.split(' ')
+    for flag in libs_list:
         if flag == '':
             continue
         if flag[:2] == "-l":
@@ -87,27 +100,31 @@ def extract_libs(libs):
 
 libxml2_cflags = commands.getoutput('xml2-config --cflags')
 if libxml2_cflags[:2] not in ["-I", "-D"]:
-    sys.exit("Error : cannot get LibXML2 pre-processor and compiler flags; do you have the `libxml2` development package installed?")
+    sys.exit("Error : cannot get LibXML2 pre-processor and compiler flags; "
+             "do you have the `libxml2` development package installed?")
 
 libxml2_libs = commands.getoutput('xml2-config --libs')
 if libxml2_libs[:2] not in ["-l", "-L"]:
-    sys.exit("Error : cannot get LibXML2 linker flags; do you have the `libxml2` development package installed?")
+    sys.exit("Error : cannot get LibXML2 linker flags; do you have the"
+             " `libxml2` development package installed?")
 
 crypto_engine = environ.get("XMLSEC_CRYPTO_ENGINE")
 if crypto_engine is None:
-  crypto_engine = commands.getoutput("xmlsec1-config --crypto")
-  if not crypto_engine:
-    sys.exit("Error: cannot get XMLSec1 crypto engine")
+    crypto_engine = commands.getoutput("xmlsec1-config --crypto")
+    if not crypto_engine:
+        sys.exit("Error: cannot get XMLSec1 crypto engine")
 else:
-  assert crypto_engine in ("openssl", "gnutls", "nss")
+    assert crypto_engine in ("openssl", "gnutls", "nss")
 crypto_engine = " --crypto=" + crypto_engine
 xmlsec1_cflags = commands.getoutput("xmlsec1-config --cflags" + crypto_engine)
 if xmlsec1_cflags[:2] not in ["-I", "-D"]:
-    sys.exit("Error: cannot get XMLSec1 pre-processor and compiler flags; do you have the `libxmlsec1` development package installed?")
+    sys.exit("Error: cannot get XMLSec1 pre-processor and compiler flags;"
+             " do you have the `libxmlsec1` development package installed?")
 
 xmlsec1_libs = commands.getoutput("xmlsec1-config --libs" + crypto_engine)
 if xmlsec1_libs[:2] not in ["-l", "-L"]:
-    sys.exit("Error : cannot get XMLSec1 linker flags; do you have the `libxmlsec1` development package installed?")
+    sys.exit("Error : cannot get XMLSec1 linker flags; do you have the "
+             "`libxmlsec1` development package installed?")
 
 extract_cflags(libxml2_cflags)
 extract_libs(libxml2_libs)
@@ -117,63 +134,77 @@ extract_libs(xmlsec1_libs)
 
 
 def get_lxml_include_dirs():
-  from os import environ
-  lxml_home = environ.get("LXML_HOME")
-  if lxml_home is None:
-    # `LXML_HOME` not specified -- derive from installed `lxml`
-    import lxml
-    lxml_home = dirname(lxml.__file__)
-  else:
-    if not exists(lxml_home):
-      sys.exit("The directory specified via envvar `LXML_HOME` does not exist")
-    lxml_home = join(lxml_home, "src", "lxml")
-  # check that it contains what is needed
-  lxml_include = join(lxml_home, "includes")
-  if not (exists(join(lxml_home, "etreepublic.pxd")) \
-         or exists(join(lxml_include, "etreepublic.pxd"))):
-    sys.exit("The lxml installation lacks the mandatory `etreepublic.pxd`. You may need to install `lxml` manually or set envvar `LXML_HOME` to an `lxml` installation with `etreepublic.pxd`")
-  return [lxml_home, lxml_include]
+    from os import environ
+    lxml_home = environ.get("LXML_HOME")
+    if lxml_home is None:
+        # `LXML_HOME` not specified -- derive from installed `lxml`
+        import lxml
+        lxml_home = dirname(lxml.__file__)
+    else:
+        if not exists(lxml_home):
+            sys.exit("The directory specified via envvar `LXML_HOME`"
+                     " does not exist")
+        lxml_home = join(lxml_home, "src", "lxml")
+    # check that it contains what is needed
+    lxml_include = join(lxml_home, "includes")
+    if not (exists(join(lxml_home, "etreepublic.pxd"))
+            or exists(join(lxml_include, "etreepublic.pxd"))):
+        sys.exit("The lxml installation lacks the mandatory `etreepublic.pxd`."
+                 " You may need to install `lxml` manually or set envvar "
+                 "`LXML_HOME` to an `lxml` installation with "
+                 "`etreepublic.pxd`")
+    return [lxml_home, lxml_include]
 
 
 setupArgs = dict(
     include_package_data=True,
-    setup_requires=["lxml>=3.0",], # see "http://mail.python.org/pipermail/distutils-sig/2006-October/006749.html" in case of problems
+    # see
+    # "http://mail.python.org/pipermail/distutils-sig/2006-October/006749.html"
+    # in case of problems
+    setup_requires=["lxml>=3.0", ],
     install_requires=[
-      'setuptools', # to make "buildout" happy
-      "lxml>=3.0",
-    ] ,
-    namespace_packages=['dm', 'dm.xmlsec',
-                        ],
+        'setuptools',  # to make "buildout" happy
+        "lxml>=3.0",
+    ],
+    namespace_packages=['dm', 'dm.xmlsec', ],
     zip_safe=False,
-    entry_points = dict(
-      ),
+    entry_points=dict(
+    ),
     test_suite='dm.xmlsec.binding.tests.testsuite',
     test_requires=['lxml'],
-    )
+)
 
 cd = abspath(dirname(__file__))
 pd = join(cd, 'dm', 'xmlsec', 'binding')
 
-def pread(filename, base=pd): return open(join(base, filename)).read().rstrip()
+
+def pread(filename, base=pd):
+    """ Open the file for reading and return the contents.
+
+    :param filename: Filename to open
+    :param base: Path to join the filename with
+    """
+    return open(join(base, filename)).read().rstrip()
 
 
 setup(name='dm.xmlsec.binding',
       version=pread('VERSION.txt').split('\n')[0],
-      description="Cython/lxml based binding for the XML security library -- for lxml 3.x",
+      description="Cython/lxml based binding for the XML security library"
+                  " -- for lxml 3.x",
       long_description=pread('README.txt'),
       classifiers=[
-        #'Development Status :: 3 - Alpha',
-        'Development Status :: 4 - Beta',
-        #'Development Status :: 5 - Production/Stable',
-        'Intended Audience :: Developers',
-        'License :: OSI Approved :: BSD License',
-        'Operating System :: OS Independent',
-        'Programming Language :: Python :: 2.4',
-        'Programming Language :: Python :: 2.6',
-        'Programming Language :: Python :: 2.7',
-        "Operating System :: POSIX :: Linux",
-        'Topic :: Utilities',
-        ],
+          # 'Development Status :: 3 - Alpha',
+          'Development Status :: 4 - Beta',
+          # 'Development Status :: 5 - Production/Stable',
+          'Intended Audience :: Developers',
+          'License :: OSI Approved :: BSD License',
+          'Operating System :: OS Independent',
+          'Programming Language :: Python :: 2.4',
+          'Programming Language :: Python :: 2.6',
+          'Programming Language :: Python :: 2.7',
+          "Operating System :: POSIX :: Linux",
+          'Topic :: Utilities',
+      ],
       author='Dieter Maurer',
       author_email='dieter@handshake.de',
       url='http://pypi.python.org/pypi/dm.xmlsec.binding',
@@ -181,20 +212,19 @@ setup(name='dm.xmlsec.binding',
       license='BSD',
       keywords='encryption xml security digital signature cython lxml',
       ext_modules=[
-        Extension(
-          "dm.xmlsec.binding._xmlsec",
-          ["src/_xmlsec.pyx"],
-          define_macros=define_macros,
-          include_dirs=include_dirs,
-          library_dirs=library_dirs,
-          libraries=libraries,
-          depends=[
-            "src/" + f for f in
-            ("cxmlsec.pxd cxmlsec.h "
-            "lxml.etree.h lxml-version.h lxml.etree_api.h").split()
-             ]
-                  ),
-        ],
+          Extension(
+              "dm.xmlsec.binding._xmlsec",
+              ["src/_xmlsec.pyx"],
+              define_macros=define_macros,
+              include_dirs=include_dirs,
+              library_dirs=library_dirs,
+              libraries=libraries,
+              depends=[
+                  "src/" + f for f in
+                  ("cxmlsec.pxd cxmlsec.h "
+                   "lxml.etree.h lxml-version.h lxml.etree_api.h").split()
+              ]
+          ),
+      ],
       cmdclass=cmdclass,
-      **setupArgs
-      )
+      **setupArgs)
